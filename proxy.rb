@@ -40,6 +40,8 @@ app = Proc.new do |env|
     response = client.head "#{env['REQUEST_PATH']}?#{env['QUERY_STRING']}", {}, headers
   elsif env['REQUEST_METHOD'] == 'POST'
     response = client.post "#{env['REQUEST_PATH']}?#{env['QUERY_STRING']}", "#{postdata}", headers
+  elsif env['REQUEST_METHOD'] == 'OPTIONS'
+    response = client.run_request(:options, "#{env['REQUEST_PATH']}?#{env['QUERY_STRING']}", "#{postdata}", headers)
   else
     response = nil
   end
