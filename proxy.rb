@@ -12,6 +12,8 @@ UPSTREAM_URL = config['upstream_url']
 UPSTREAM_SERVICE_NAME = config['upstream_service_name']
 UPSTREAM_REGION = config['upstream_region']
 LISTEN_PORT = config['listen_port'] || 8080
+USERNAME = config['username']
+PASSWORD = config['password']
 
 
 unless ENV['AWS_ACCESS_KEY_ID'].nil? || ENV['AWS_SECRET_ACCESS_KEY'].nil? || ENV['AWS_SESSION_TOKEN'].nil?
@@ -20,7 +22,7 @@ else
   CREDENTIALS = Aws::InstanceProfileCredentials.new
 end
 
-app = Proc.new do |env|
+forwarder = Proc.new do |env|
   postdata = env['rack.input'].read
 
   client = Faraday.new(url: UPSTREAM_URL) do |faraday|
@@ -56,5 +58,14 @@ end
 webrick_options = {
     :Port => LISTEN_PORT,
 }
+
+app = Rack::Builder.new do
+  if USERNAME && PASSWORD
+    use Rack::Auth::Basic, "Restricted Area" do |username, password|
+      [username, password] == [USERNAME, PASSWORD]
+    end
+  end
+  run forwarder
+end.to_app
 
 Rack::Handler::WEBrick.run app, webrick_options
