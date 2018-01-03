@@ -15,6 +15,7 @@ UPSTREAM_PATH_PREFIX = config['upstream_path_prefix']
 UPSTREAM_SERVICE_NAME = config['upstream_service_name']
 UPSTREAM_REGION = config['upstream_region']
 LISTEN_PORT = config['listen_port'] || 8080
+BIND_ADDRESS = config['bind_address']
 HTTP_USERNAME = config['http_username']
 HTTP_PASSWORD = config['http_password']
 ACCESS_KEY = config['aws_access_key'] || ENV['AWS_ACCESS_KEY_ID']
@@ -70,8 +71,9 @@ forwarder = Proc.new do |env|
 end
 
 webrick_options = {
-  :Port => LISTEN_PORT,
+  :Port => LISTEN_PORT
 }
+webrick_options[:Host] = BIND_ADDRESS if BIND_ADDRESS
 
 app = Rack::Builder.new do
   if HTTP_USERNAME && HTTP_PASSWORD

@@ -3,6 +3,7 @@ upstream_path_prefix: _plugin/kibana/
 upstream_service_name: es
 upstream_region: eu-west-1
 listen_port: 8080
+bind_address: 127.0.0.1
 aws_access_key: key
 aws_secret_access_key: secret
 http_username: admin
