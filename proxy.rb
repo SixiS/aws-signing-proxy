@@ -5,19 +5,24 @@ require 'faraday'
 require 'faraday_middleware/aws_signers_v4'
 require 'net/http/persistent'
 require 'yaml'
+require 'patron'
+require 'pry'
 
 config = YAML.load_file(File.dirname(File.expand_path(__FILE__)) + '/config.yaml')
 
 UPSTREAM_URL = config['upstream_url']
+UPSTREAM_PATH_PREFIX = config['upstream_path_prefix']
 UPSTREAM_SERVICE_NAME = config['upstream_service_name']
 UPSTREAM_REGION = config['upstream_region']
 LISTEN_PORT = config['listen_port'] || 8080
-USERNAME = config['username']
-PASSWORD = config['password']
+HTTP_USERNAME = config['http_username']
+HTTP_PASSWORD = config['http_password']
+ACCESS_KEY = config['aws_access_key'] || ENV['AWS_ACCESS_KEY_ID']
+SECRET_ACCESS_KEY = config['aws_secret_access_key'] || ENV['AWS_SECRET_ACCESS_KEY']
 
 
-unless ENV['AWS_ACCESS_KEY_ID'].nil? || ENV['AWS_SECRET_ACCESS_KEY'].nil? || ENV['AWS_SESSION_TOKEN'].nil?
-  CREDENTIALS = Aws::Credentials.new(ENV['AWS_ACCESS_KEY_ID'],ENV['AWS_SECRET_ACCESS_KEY'],ENV['AWS_SESSION_TOKEN'])
+unless ACCESS_KEY.nil? || SECRET_ACCESS_KEY.nil?
+  CREDENTIALS = Aws::Credentials.new(ACCESS_KEY, SECRET_ACCESS_KEY)
 else
   CREDENTIALS = Aws::InstanceProfileCredentials.new
 end
@@ -26,8 +31,10 @@ forwarder = Proc.new do |env|
   postdata = env['rack.input'].read
 
   client = Faraday.new(url: UPSTREAM_URL) do |faraday|
+    faraday.options[:open_timeout] = 10
+    faraday.options[:timeout] = 20
     faraday.request(:aws_signers_v4, credentials: CREDENTIALS, service_name: UPSTREAM_SERVICE_NAME, region: UPSTREAM_REGION)
-    faraday.adapter(:net_http_persistent)
+    faraday.adapter :patron
   end
 
   headers = env.select {|k,v| k.start_with? 'HTTP_', 'CONTENT_' }
@@ -36,33 +43,40 @@ forwarder = Proc.new do |env|
                 .select {|key,_| key != 'HOST'}
                 .reduce Hash.new, :merge
 
+  headers.delete("CONNECTION")
+  request_path = "#{env['REQUEST_PATH']}?#{env['QUERY_STRING']}"
+  if UPSTREAM_PATH_PREFIX && !request_path.match(/^\/?#{UPSTREAM_PATH_PREFIX}/)
+    request_path = UPSTREAM_PATH_PREFIX
+  end
+
   if env['REQUEST_METHOD'] == 'GET'
-    response = client.get "#{env['REQUEST_PATH']}?#{env['QUERY_STRING']}", {}, headers
+    response = client.get request_path, {}, headers
   elsif env['REQUEST_METHOD'] == 'HEAD'
-    response = client.head "#{env['REQUEST_PATH']}?#{env['QUERY_STRING']}", {}, headers
+    response = client.head request_path, {}, headers
   elsif env['REQUEST_METHOD'] == 'DELETE'
-    response = client.delete "#{env['REQUEST_PATH']}?#{env['QUERY_STRING']}", {}, headers
+    response = client.delete request_path, {}, headers
   elsif env['REQUEST_METHOD'] == 'POST'
-    response = client.post "#{env['REQUEST_PATH']}?#{env['QUERY_STRING']}", "#{postdata}", headers
+    response = client.post request_path, "#{postdata}", headers
   elsif env['REQUEST_METHOD'] == 'PUT'
-    response = client.put "#{env['REQUEST_PATH']}?#{env['QUERY_STRING']}", "#{postdata}", headers
+    response = client.put request_path, "#{postdata}", headers
   elsif env['REQUEST_METHOD'] == 'OPTIONS'
-    response = client.run_request(:options, "#{env['REQUEST_PATH']}?#{env['QUERY_STRING']}", "#{postdata}", headers)
+    response = client.run_request(:options, request_path, "#{postdata}", headers)
   else
     response = nil
   end
+
   puts "#{response.status} #{env['REQUEST_METHOD']} #{env['REQUEST_PATH']}?#{env['QUERY_STRING']} #{postdata}"
   [response.status, response.headers, [response.body]]
 end
 
 webrick_options = {
-    :Port => LISTEN_PORT,
+  :Port => LISTEN_PORT,
 }
 
 app = Rack::Builder.new do
-  if USERNAME && PASSWORD
+  if HTTP_USERNAME && HTTP_PASSWORD
     use Rack::Auth::Basic, "Restricted Area" do |username, password|
-      [username, password] == [USERNAME, PASSWORD]
+      [username, password] == [HTTP_USERNAME, HTTP_PASSWORD]
     end
   end
   run forwarder
